@@ -7,7 +7,8 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("element not found")
+	ErrNotFound          = errors.New("element not found")
+	ErrUnexpectedKeyType = errors.New("unexpected key type")
 )
 
 type Cache[K comparable, V any] interface {
@@ -44,8 +45,9 @@ func (lru *lruCache[K, V]) Get(key K) (V, error) {
 	defer lru.lock.Unlock()
 
 	elem, ok := lru.elements[key]
-	if !ok || elem != nil {
-		return nil, ErrNotFound
+	if !ok || elem == nil {
+		var res V // default value of generic type V
+		return res, ErrNotFound
 	}
 
 	lru.keysQueue.MoveToFront(elem.keyPtr)
@@ -64,7 +66,9 @@ func (lru *lruCache[K, V]) Put(key K, val V) error {
 	}
 
 	if lru.size == lru.keysQueue.Len() {
-		lru.evict()
+		if err := lru.evict(); err != nil {
+			return err
+		}
 	}
 	newKeyPtr := lru.keysQueue.PushFront(&key)
 	lru.elements[key] = &node[V]{value: val, keyPtr: newKeyPtr}
@@ -79,8 +83,13 @@ func (lru *lruCache[K, V]) Len() int {
 	return lru.keysQueue.Len()
 }
 
-func (lru *lruCache[K, V]) evict() {
+func (lru *lruCache[K, V]) evict() error {
 	keyForEviction := lru.keysQueue.Back()
-	delete(lru.elements, keyForEviction.Value)
+	key, ok := keyForEviction.Value.(*K)
+	if !ok {
+		return ErrUnexpectedKeyType
+	}
+	delete(lru.elements, *key)
 	lru.keysQueue.Remove(keyForEviction)
+	return nil
 }
